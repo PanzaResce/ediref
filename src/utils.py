@@ -100,13 +100,13 @@ def preprocess_text(tokenizer, rows, num_emotions):
         
         for i in range(len(text)):
             obj = { 
-                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][i]), num_emotions),
-                'triggers': row['triggers'][i],
                 'dialogue_ids': tokenized_text['input_ids'],
                 'dialogue_mask': tokenized_text['attention_mask'],
                 'dialogue_text': concatenated_text,
                 'utterance_ids': tokenized_sentences_for_text['input_ids'][i],
-                'utterance_mask':tokenized_sentences_for_text['attention_mask'][i]
+                'utterance_mask':tokenized_sentences_for_text['attention_mask'][i],
+                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][i]), num_emotions),
+                'triggers': row['triggers'][i],
             }
             for key in obj.keys():
                 my_dict[key].append(obj[key])
