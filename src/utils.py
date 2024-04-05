@@ -3,8 +3,8 @@ import pandas as pd
 import torch
 import urllib
 import tqdm
+from datasets import Dataset
 import matplotlib.pyplot as plt
-from torch.nn.functional import one_hot
 from pathlib import Path
 from sklearn.metrics import f1_score, accuracy_score
 
@@ -31,6 +31,7 @@ def f1_score_on_flat(y_pred, y_true, labels):
     return result
 
 def compute_metrics(eval_pred, id2emotion):
+    print("compute_metrics was called")
     predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = eval_pred
     flat_pred_emotions = [item for list_of_pred in predictions_emotions for item in list_of_pred]
     flat_label_emotions = [item for list_of_pred in labels_emotions for item in list_of_pred]
@@ -80,23 +81,42 @@ def print_loss(trainer_history):
 
     plt.show()
 
-def preprocess_text(tokenizer, rows):
-    tokenized_texts = []
-    for text in rows['utterances']:
-        tokenized_sentences = tokenizer(text, padding=True, truncation=True)
-        tokenized_texts.append(tokenized_sentences)
-
-    # Create a dictionary for the dataset
-    dataset_dict = {
-        'input_ids': [text_tokens['input_ids'] for text_tokens in tokenized_texts],
-        'attention_mask': [text_tokens['attention_mask'] for text_tokens in tokenized_texts],
-    }
-    return dataset_dict
+def preprocess_text(tokenizer, rows, num_emotions):
+    my_dict = {}
+    my_dict.update({
+        'emotions_id': [],
+        'triggers': [],
+        'dialogue_ids':[],
+        'dialogue_mask': [],
+        'dialogue_text': [],
+        'utterance_ids': [],
+        'utterance_mask':[]
+    })
+    for row in rows:
+        text = row['utterances']
+        concatenated_text = " [SEP] ".join(text)
+        tokenized_sentences_for_text = tokenizer(text, padding=True, truncation=True)
+        tokenized_text = tokenizer(concatenated_text, padding=True, truncation=True)
+        
+        for i in range(len(text)):
+            obj = { 
+                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][i]), num_emotions),
+                'triggers': row['triggers'][i],
+                'dialogue_ids': tokenized_text['input_ids'],
+                'dialogue_mask': tokenized_text['attention_mask'],
+                'dialogue_text': concatenated_text,
+                'utterance_ids': tokenized_sentences_for_text['input_ids'][i],
+                'utterance_mask':tokenized_sentences_for_text['attention_mask'][i]
+            }
+            for key in obj.keys():
+                my_dict[key].append(obj[key])
+    return Dataset.from_dict(my_dict)
 
 def get_datasets(train, val, test, tokenizer):
-    train_data = train.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
-    val_data = val.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
-    test_data = test.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
+    
+    train_data = preprocess_text(tokenizer, train)
+    val_data = preprocess_text(tokenizer, val)#val.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
+    test_data = preprocess_text(tokenizer, test)#test.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
 
     train_data.set_format("torch")
     val_data.set_format("torch")
@@ -149,21 +169,21 @@ class DataframeManager():
             for emotion in row:
                 unique_elements.add(emotion)
         return unique_elements
-
-    def get_one_hot(self, targets, nb_classes):
-        res = np.eye(nb_classes)[np.array(targets).reshape(-1)]
-        return res.reshape(list(targets.shape)+[nb_classes])
-
+    
+    def get_id2emotion(self):
+        return {i:label for i, label in enumerate(self.unique_emotions)}
+    
     def produce_df(self):
         self.clean_df = self.raw_df.copy()
 
         self.unique_emotions = self.get_unique_elements_for(self.column_emotions)
+        self.unique_emotions_len = len(self.unique_emotions)
+        # self.unique_emotions_one_hot_encodings = [ [1 if j == i else 0 for j in range(self.unique_emotions_len)] for i in range(self.unique_emotions_len)]
 
         self.emotion2id = {label:i for i, label in enumerate(self.unique_emotions)}
-        # id2emotion = {i:label for i, label in enumerate(unique_emotions)}
 
-        # add emotions_id column as one-hot encodings
-        self.clean_df[self.column_emotions_id] = [self.get_one_hot(np.array([self.emotion2id[emotion] for emotion in emotions ]), 7) for emotions in self.clean_df["emotions"]]
+        # add emotions_id column
+        self.clean_df[self.column_emotions_id] = [[self.emotion2id[emotion] for emotion in emotions ] for emotions in self.clean_df[self.column_emotions]]
 
         # handle None triggers, set to 0 if None
         self.clean_df[self.column_triggers] = self.clean_df[self.column_triggers].apply(lambda x: [int(value) if pd.notna(value) else int(0)  for value in x])  
@@ -173,6 +193,32 @@ class DataframeManager():
         self.clean_df = self.clean_df.drop("speakers", axis=1)
         return self.clean_df
     
+    def produce_dataset(self, tokenizer, RANDOM_SEED):
+        train_df, val_df, test_df = self.split_df(RANDOM_SEED)
+        train_dataset = Dataset.from_pandas(train_df)
+        val_dataset = Dataset.from_pandas(val_df)
+        test_dataset = Dataset.from_pandas(test_df)
+
+        # train_data_tokenized, val_data_tokenized, test_data_tokenized = get_datasets(train_dataset, val_dataset, test_dataset, tokenizer)
+
+        train_data_tokenized = preprocess_text(tokenizer, train_dataset, len(self.unique_emotions))
+        val_data_tokenized = preprocess_text(tokenizer, val_dataset, len(self.unique_emotions))
+        test_data_tokenized = preprocess_text(tokenizer, test_dataset, len(self.unique_emotions))
+
+        train_data_tokenized.set_format("torch")
+        val_data_tokenized.set_format("torch")
+        test_data_tokenized.set_format("torch")
+
+        # transform emotions_ids into one-hot encoding
+        # for i in range(len(train_data_tokenized)):
+        #     train_data_tokenized[i]["emotions_id"] = torch.nn.functional.one_hot(train_data_tokenized[i]["emotions_id"], len(self.unique_emotions))
+        # for i in range(len(val_data_tokenized)):
+        #     val_data_tokenized[i]["emotions_id"] = torch.nn.functional.one_hot(val_data_tokenized[i]["emotions_id"], len(self.unique_emotions))
+        # for i in range(len(test_data_tokenized)):
+        #     test_data_tokenized[i]["emotions_id"] = torch.nn.functional.one_hot(test_data_tokenized[i]["emotions_id"], len(self.unique_emotions))
+
+        return train_data_tokenized, val_data_tokenized, test_data_tokenized
+
     def split_df(self, seed):
         train_df, val_df, test_df = np.split(self.clean_df.sample(frac=1, random_state=seed), [int(.8*len(self.clean_df)), int(.9*len(self.clean_df))])
         return train_df, val_df, test_df
