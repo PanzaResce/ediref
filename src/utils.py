@@ -81,48 +81,40 @@ def print_loss(trainer_history):
 
     plt.show()
 
-def preprocess_text(tokenizer, rows, num_emotions):
+def preprocess_text(tokenizer, dataset, num_emotions):
     my_dict = {}
     my_dict.update({
+        'episode': [],
         'emotions_id': [],
         'triggers': [],
         'dialogue_ids':[],
         'dialogue_mask': [],
         'dialogue_text': [],
         'utterance_ids': [],
-        'utterance_mask':[]
+        'utterance_mask':[],
+        'utterance_index':[]
     })
-    for row in rows:
+    for row in dataset:
         text = row['utterances']
         concatenated_text = " [SEP] ".join(text)
         tokenized_sentences_for_text = tokenizer(text, padding=True, truncation=True)
         tokenized_text = tokenizer(concatenated_text, padding=True, truncation=True)
         
         for i in range(len(text)):
-            obj = { 
+            obj = {
+                'episode': row["episode"],
                 'dialogue_ids': tokenized_text['input_ids'],
                 'dialogue_mask': tokenized_text['attention_mask'],
                 'dialogue_text': concatenated_text,
                 'utterance_ids': tokenized_sentences_for_text['input_ids'][i],
-                'utterance_mask':tokenized_sentences_for_text['attention_mask'][i],
+                'utterance_mask': tokenized_sentences_for_text['attention_mask'][i],
+                'utterance_index': i,
                 'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][i]), num_emotions),
                 'triggers': row['triggers'][i],
             }
             for key in obj.keys():
                 my_dict[key].append(obj[key])
     return Dataset.from_dict(my_dict)
-
-def get_datasets(train, val, test, tokenizer):
-    
-    train_data = preprocess_text(tokenizer, train)
-    val_data = preprocess_text(tokenizer, val)#val.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
-    test_data = preprocess_text(tokenizer, test)#test.map(lambda rows: preprocess_text(tokenizer, rows), batched=True)
-
-    train_data.set_format("torch")
-    val_data.set_format("torch")
-    test_data.set_format("torch")
-
-    return train_data, val_data, test_data
 
 class DataframeManager():
     def __init__(self, url, dataset_name):
@@ -198,8 +190,6 @@ class DataframeManager():
         train_dataset = Dataset.from_pandas(train_df)
         val_dataset = Dataset.from_pandas(val_df)
         test_dataset = Dataset.from_pandas(test_df)
-
-        # train_data_tokenized, val_data_tokenized, test_data_tokenized = get_datasets(train_dataset, val_dataset, test_dataset, tokenizer)
 
         train_data_tokenized = preprocess_text(tokenizer, train_dataset, len(self.unique_emotions))
         val_data_tokenized = preprocess_text(tokenizer, val_dataset, len(self.unique_emotions))
