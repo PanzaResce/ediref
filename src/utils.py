@@ -82,9 +82,7 @@ def print_loss(trainer_history):
     plt.show()
 
 def preprocess_text(tokenizer, dataset, num_emotions):
-    my_dict = {}
-    my_dict.update({
-        'episode': [],
+    my_dict = {
         'emotions_id': [],
         'triggers': [],
         'dialogue_ids':[],
@@ -93,29 +91,29 @@ def preprocess_text(tokenizer, dataset, num_emotions):
         'utterance_ids': [],
         'utterance_mask':[],
         'utterance_index':[]
-    })
-    for row in dataset:
-        text = row['utterances']
-        concatenated_text = " [SEP] ".join(text)
-        tokenized_sentences_for_text = tokenizer(text, padding=True, truncation=True)
-        tokenized_text = tokenizer(concatenated_text, padding=True, truncation=True)
-        
-        for i in range(len(text)):
-            obj = {
-                'episode': row["episode"],
-                'dialogue_ids': tokenized_text['input_ids'],
-                'dialogue_mask': tokenized_text['attention_mask'],
-                'dialogue_text': concatenated_text,
-                'utterance_ids': tokenized_sentences_for_text['input_ids'][i],
-                'utterance_mask': tokenized_sentences_for_text['attention_mask'][i],
-                'utterance_index': i,
-                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][i]), num_emotions),
-                'triggers': row['triggers'][i],
+    }
+    all_sentances = [sentance for row in dataset for sentance in row['utterances']]
+    concatenated_texts =[" [SEP] ".join(text) for text in dataset['utterances']] 
+    all_sentances_tokenized = tokenizer(all_sentances, padding=True, truncation=True)
+    concatenated_texts_tokenized = tokenizer(concatenated_texts, padding=True, truncation=True)
+    counter = 0
+    for i, row in enumerate(dataset):
+        for j in range(len(row['utterances'])):
+            obj = { 
+                'dialogue_ids': concatenated_texts_tokenized['input_ids'][i],
+                'dialogue_mask': concatenated_texts_tokenized['attention_mask'][i],
+                'dialogue_text': concatenated_texts[i],
+                'utterance_ids': all_sentances_tokenized['input_ids'][counter],
+                'utterance_mask':all_sentances_tokenized['attention_mask'][counter],
+                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][j]), num_emotions),
+                'triggers': row['triggers'][j],
+                'utterance_index': j
             }
+            counter += 1
             for key in obj.keys():
                 my_dict[key].append(obj[key])
     return Dataset.from_dict(my_dict)
-
+    
 class DataframeManager():
     def __init__(self, url, dataset_name):
         self.dataset_path = None
