@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from transformers import LlamaTokenizer, LlamaForSequenceClassification, LlamaModel
+from transformers import LlamaTokenizer, LlamaForSequenceClassification, LlamaModel, BertPreTrainedModel, BertConfig, BertModel
 
 class LLAMA_EFR(nn.Module):
     def __init__(self, model_path, hid_dim=3200):
