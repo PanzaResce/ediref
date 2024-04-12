@@ -6,6 +6,7 @@ import tqdm
 from datasets import Dataset
 import matplotlib.pyplot as plt
 from pathlib import Path
+import torch
 from sklearn.metrics import f1_score, accuracy_score
 
 def set_seeds(SEED):
@@ -26,20 +27,57 @@ def download_url(download_path: Path, url: str):
 def f1_score_per_instance(y_pred, y_true, labels):
     scores = [f1_score(y_true[i], y_pred[i], average='macro', labels=labels, zero_division=0) for i in range(len(y_pred))]
     return round(sum(scores)/len(scores), 4)
+
 def f1_score_on_flat(y_pred, y_true, labels):
     result = round(f1_score(y_true, y_pred, average='macro', labels=labels, zero_division=0), 4)
     return result
 
-def compute_metrics(eval_pred, id2emotion):
-    # print("compute_metrics was called")
-    predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = eval_pred
-    flat_pred_emotions = [item for list_of_pred in predictions_emotions for item in list_of_pred]
-    flat_label_emotions = [item for list_of_pred in labels_emotions for item in list_of_pred]
-    flat_pred_triggers = [item for list_of_pred in predictions_triggers for item in list_of_pred]
-    flat_label_triggers = [item for list_of_pred in labels_triggers for item in list_of_pred]
+def classify_emotion_logits(predicted_emotion_logits, thresh=0.5):
+    print("predicted_emotion_logits before = ", torch.sigmoid(predicted_emotion_logits))
+    predicted_emotion_logits = (predicted_emotion_logits > thresh)
+    print("predicted_emotion_logits after = ", predicted_emotion_logits)
+    return predicted_emotion_logits
 
-    f1scores_emotions_instance = f1_score_per_instance(predictions_emotions, labels_emotions, list(id2emotion.keys()))
-    f1scores_emotions_flatten = f1_score_on_flat(flat_pred_emotions, flat_label_emotions, list(id2emotion.keys()))
+
+def compute_metrics_for_trainer(eval_pred):
+    [flat_pred_emotions_logits, _] = eval_pred.predictions
+    flat_pred_emotions = []
+    for predicted_emotion_logits in flat_pred_emotions_logits:
+        flat_pred_emotions.append(classify_emotion_logits(torch.tensor(predicted_emotion_logits)))
+    eval_pred.predictions = (flat_pred_emotions, *eval_pred.predictions[1:])
+    return compute_metrics(eval_pred)
+    
+
+def restore_texts(eval_pred):
+    [flat_pred_emotions, flat_pred_triggers] = eval_pred.predictions
+    [flat_label_emotions, flat_label_triggers, dialogue_index] = eval_pred.label_ids[0:3]
+    index_of_last_text = -1
+    k = -1
+    predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = [], [], [], []
+    for i, index_of_dialog in enumerate(dialogue_index):
+        if not index_of_dialog == index_of_last_text:
+            predictions_emotions.append([flat_pred_emotions[i]])
+            labels_emotions.append([flat_label_emotions[i]])
+            predictions_triggers.append([flat_pred_triggers[i]])
+            labels_triggers.append([flat_label_triggers[i]])
+            index_of_last_text = index_of_dialog
+            k+=1
+        else:
+            predictions_emotions[k].append(flat_pred_emotions[i])
+            labels_emotions[k].append(flat_label_emotions[i])
+            predictions_triggers[k].append(flat_pred_triggers[i])
+            labels_triggers[k].append(flat_label_triggers[i])
+    return predictions_emotions, labels_emotions, predictions_triggers, labels_triggers
+
+
+def compute_metrics(eval_pred, emotion_count=7):
+    [flat_pred_emotions, flat_pred_triggers] = eval_pred.predictions
+    [flat_label_emotions, flat_label_triggers] = eval_pred.label_ids[0:2]
+    
+    predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = restore_texts(eval_pred)
+
+    f1scores_emotions_instance = f1_score_per_instance(predictions_emotions, labels_emotions, list(range(emotion_count)))
+    f1scores_emotions_flatten = f1_score_on_flat(flat_pred_emotions, flat_label_emotions, list(range(emotion_count)))
     f1scores_triggers_instance = f1_score_per_instance(predictions_triggers, labels_triggers, [0,1])
     f1scores_triggers_flatten = f1_score_on_flat(flat_pred_triggers, flat_label_triggers, [0,1])
 
@@ -84,6 +122,7 @@ def print_loss(trainer_history):
 def preprocess_text(tokenizer, dataset, num_emotions):
     my_dict = {
         'episode': [],
+        'emotions_id_one_hot_encoding': [],
         'emotions_id': [],
         'triggers': [],
         'dialogue_ids':[],
@@ -109,7 +148,8 @@ def preprocess_text(tokenizer, dataset, num_emotions):
                 'dialogue_text': concatenated_texts[i],
                 'utterance_ids': all_sentences_tokenized['input_ids'][counter],
                 'utterance_mask':all_sentences_tokenized['attention_mask'][counter],
-                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][j]), num_emotions),
+                'emotions_id_one_hot_encoding': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][j]), num_emotions),
+                'emotions_id': row["emotions_id"][j],
                 'triggers': row['triggers'][j],
                 'utterance_index': j
             }
@@ -195,9 +235,9 @@ class DataframeManager():
         val_dataset = Dataset.from_pandas(val_df)
         test_dataset = Dataset.from_pandas(test_df)
 
-        train_data_tokenized = preprocess_text(tokenizer, train_dataset, len(self.unique_emotions))
-        val_data_tokenized = preprocess_text(tokenizer, val_dataset, len(self.unique_emotions))
-        test_data_tokenized = preprocess_text(tokenizer, test_dataset, len(self.unique_emotions))
+        train_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(train_dataset[0:10]), len(self.unique_emotions))
+        val_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(val_dataset[0:2]), len(self.unique_emotions))
+        test_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(test_dataset[0:2]), len(self.unique_emotions))
 
         train_data_tokenized.set_format("torch")
         val_data_tokenized.set_format("torch")
