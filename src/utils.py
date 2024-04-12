@@ -31,7 +31,7 @@ def f1_score_on_flat(y_pred, y_true, labels):
     return result
 
 def compute_metrics(eval_pred, id2emotion):
-    print("compute_metrics was called")
+    # print("compute_metrics was called")
     predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = eval_pred
     flat_pred_emotions = [item for list_of_pred in predictions_emotions for item in list_of_pred]
     flat_label_emotions = [item for list_of_pred in labels_emotions for item in list_of_pred]
@@ -82,8 +82,7 @@ def print_loss(trainer_history):
     plt.show()
 
 def preprocess_text(tokenizer, dataset, num_emotions):
-    my_dict = {}
-    my_dict.update({
+    my_dict = {
         'episode': [],
         'emotions_id': [],
         'triggers': [],
@@ -93,29 +92,30 @@ def preprocess_text(tokenizer, dataset, num_emotions):
         'utterance_ids': [],
         'utterance_mask':[],
         'utterance_index':[]
-    })
-    for row in dataset:
-        text = row['utterances']
-        concatenated_text = " [SEP] ".join(text)
-        tokenized_sentences_for_text = tokenizer(text, padding=True, truncation=True)
-        tokenized_text = tokenizer(concatenated_text, padding=True, truncation=True)
-        
-        for i in range(len(text)):
+    }
+    all_sentences = [sentence for row in dataset for sentence in row['utterances']]
+    concatenated_texts =[" [SEP] ".join(text) for text in dataset['utterances']] 
+    all_sentences_tokenized = tokenizer(all_sentences, padding=True, truncation=True)
+    concatenated_texts_tokenized = tokenizer(concatenated_texts, padding=True, truncation=True)
+    counter = 0
+    for i, row in enumerate(dataset):
+        for j in range(len(row['utterances'])):
             obj = {
                 'episode': row["episode"],
-                'dialogue_ids': tokenized_text['input_ids'],
-                'dialogue_mask': tokenized_text['attention_mask'],
-                'dialogue_text': concatenated_text,
-                'utterance_ids': tokenized_sentences_for_text['input_ids'][i],
-                'utterance_mask': tokenized_sentences_for_text['attention_mask'][i],
-                'utterance_index': i,
-                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][i]), num_emotions),
-                'triggers': row['triggers'][i],
+                'dialogue_ids': concatenated_texts_tokenized['input_ids'][i],
+                'dialogue_mask': concatenated_texts_tokenized['attention_mask'][i],
+                'dialogue_text': concatenated_texts[i],
+                'utterance_ids': all_sentences_tokenized['input_ids'][counter],
+                'utterance_mask':all_sentences_tokenized['attention_mask'][counter],
+                'emotions_id': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][j]), num_emotions),
+                'triggers': row['triggers'][j],
+                'utterance_index': j
             }
+            counter += 1
             for key in obj.keys():
                 my_dict[key].append(obj[key])
     return Dataset.from_dict(my_dict)
-
+    
 class DataframeManager():
     def __init__(self, url, dataset_name):
         self.dataset_path = None
@@ -187,6 +187,8 @@ class DataframeManager():
     
     def produce_dataset(self, tokenizer, RANDOM_SEED):
         train_df, val_df, test_df = self.split_df(RANDOM_SEED)
+        # train_dataset = Dataset.from_pandas(train_df[0:50])
+        # val_dataset = Dataset.from_pandas(val_df[0:10])
         train_dataset = Dataset.from_pandas(train_df)
         val_dataset = Dataset.from_pandas(val_df)
         test_dataset = Dataset.from_pandas(test_df)
