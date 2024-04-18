@@ -33,18 +33,21 @@ def f1_score_on_flat(y_pred, y_true, labels):
     return result
 
 def classify_emotion_logits(predicted_emotion_logits, thresh=0.5):
-    print("predicted_emotion_logits before = ", torch.sigmoid(predicted_emotion_logits))
     predicted_emotion_logits = (predicted_emotion_logits > thresh)
-    print("predicted_emotion_logits after = ", predicted_emotion_logits)
-    return predicted_emotion_logits
+    index = [i for i,x in enumerate(predicted_emotion_logits) if x]
+    return index[0]
 
 
 def compute_metrics_for_trainer(eval_pred):
-    [flat_pred_emotions_logits, _] = eval_pred.predictions
+    [flat_pred_emotions_logits, flat_pred_triggers_logits] = eval_pred.predictions
     flat_pred_emotions = []
-    for predicted_emotion_logits in flat_pred_emotions_logits:
+    flat_pred_triggers = []
+    print("before = ", eval_pred.predictions)
+    for i, predicted_emotion_logits in enumerate(flat_pred_emotions_logits):
         flat_pred_emotions.append(classify_emotion_logits(torch.tensor(predicted_emotion_logits)))
-    eval_pred.predictions = (flat_pred_emotions, *eval_pred.predictions[1:])
+        flat_pred_triggers.append((flat_pred_triggers_logits[i]>0.5)[0])
+    eval_pred.predictions = (flat_pred_emotions, flat_pred_triggers)
+    print("after = ", eval_pred.predictions)
     return compute_metrics(eval_pred)
     
 
