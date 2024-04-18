@@ -42,12 +42,10 @@ def compute_metrics_for_trainer(eval_pred):
     [flat_pred_emotions_logits, flat_pred_triggers_logits] = eval_pred.predictions
     flat_pred_emotions = []
     flat_pred_triggers = []
-    print("before = ", eval_pred.predictions)
     for i, predicted_emotion_logits in enumerate(flat_pred_emotions_logits):
         flat_pred_emotions.append(classify_emotion_logits(torch.tensor(predicted_emotion_logits)))
         flat_pred_triggers.append((flat_pred_triggers_logits[i]>0.5)[0])
     eval_pred.predictions = (flat_pred_emotions, flat_pred_triggers)
-    print("after = ", eval_pred.predictions)
     return compute_metrics(eval_pred)
     
 
@@ -238,9 +236,9 @@ class DataframeManager():
         val_dataset = Dataset.from_pandas(val_df)
         test_dataset = Dataset.from_pandas(test_df)
 
-        train_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(train_dataset[0:10]), len(self.unique_emotions))
-        val_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(val_dataset[0:2]), len(self.unique_emotions))
-        test_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(test_dataset[0:2]), len(self.unique_emotions))
+        train_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(train_dataset[0:(len(train_dataset)//10)]), len(self.unique_emotions))
+        val_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(val_dataset[0:(len(val_dataset)//10)]), len(self.unique_emotions))
+        test_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(test_dataset[0:(len(test_dataset)//10)]), len(self.unique_emotions))
 
         train_data_tokenized.set_format("torch")
         val_data_tokenized.set_format("torch")
