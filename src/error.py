@@ -39,20 +39,24 @@ class ErrorAnalysis:
         ds.set_format()
         return pd.DataFrame.from_records([r for r in ds])
     
-    def add_model(self, model, ds, model_name='', seed = 42, type=None):
+    def add_model(self, trainer, ds, model_name='', seed = 42, type=None):
         assert ds.shape[0] == self.df.shape[0], f"Wrong Dataset passed! it has {ds.shape[0]} rows, instead of {self.df.shape[0]}" 
         #get model predictions
         try:
-            logits = model(ds)
+            outputs = trainer.predict(ds).predictions
+            logits = torch.tensor(outputs[0])
+            triggers = torch.tensor(outputs[1])
+            print(logits.shape, triggers.shape)
         except:
             print("cannot run model(ds)")
-        self.add_predictions(logits, model_name, seed, type)
+        self.add_predictions(logits, model_name, seed, type= "emotions")
+        self.add_predictions(triggers, model_name, seed, type="trigger")
         return("Successfullty added model!")
     
     def add_predictions(self, logits, model_name='', seed = 42, type=None):
         if not type and model_name[-2:]=='_t': type = 'trigger'
         elif not type: type = 'emotions'
-        type = self.TYPE(type) 
+        type = self.TYPE(type)
         if isinstance(logits,Tensor):
             logits = logits.unbind(dim=0)
         assert len(logits) == self.df.shape[0], f"Wrong predictions passed! They are {len(logits)} rows, instead of {self.df.shape[0]}" 
@@ -62,7 +66,7 @@ class ErrorAnalysis:
         match = re.match("_\d+", model_name)
         if not match: model_name = model_name.replace("_t",'') + f"_{seed}"
         if type=='trigger' and model_name[-2:]!='_t': model_name = model_name + "_t"
-        #add logits to the dataframe !WE WANT A LIST OF 1xC tensors! (Batch of Utterances x 1 x classes)
+        #add logits to the dataframe !WE WANT A LIST OF len C tensors! (Batch of Utterances x classes)
         self.df[model_name] = logits
         return ("Successfullty added predictions!")
     
@@ -84,7 +88,7 @@ class ErrorAnalysis:
         preds = torch.stack(self.df[model_name].values.tolist())
         if type == "emotions":
             preds = preds.argmax(dim = -1)
-            target = torch.tensor(self.df['emotions_id'].values)[:,None]
+            target = torch.tensor(self.df['emotions_id'].values)
             metric = MulticlassConfusionMatrix(num_classes=7, normalize='true')
             labels = self.emotion_labels
         else :
@@ -114,13 +118,11 @@ class ErrorAnalysis:
         #precision recal want preds (N,C,...) and target(N, ...) with target has one less dimension
         preds = torch.stack(self.df[model_name].values.tolist())
         if type == "emotions":
-            preds = preds[:, 0, :]
             target = torch.tensor(self.df['emotions_id'].values)
             metric = MulticlassPrecisionRecallCurve(num_classes=7, thresholds = list(np.linspace(0,1,20)))
             labels = self.emotion_labels
         else :
-            preds = preds[:, 0]
-            target = torch.tensor(self.df['triggers'].values)
+            target = torch.tensor(self.df['triggers'].values)[:,None]
             metric = BinaryPrecisionRecallCurve(thresholds = list(np.linspace(0,1,20)))
             labels = self.trigger_labels
         metric.update(preds, target)
@@ -133,7 +135,7 @@ class ErrorAnalysis:
 
 
     def get_performance_table(self, metrics = [METRICS.ACCURACY, METRICS.F1_MACRO]):
-        emotion_target = torch.tensor(self.df['emotions_id'].values)[:, None]
+        emotion_target = torch.tensor(self.df['emotions_id'].values)
         trigger_target = torch.tensor(self.df['triggers'].values)[:, None]
 
         outputs = self.df.drop(columns= self.features)
