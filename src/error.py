@@ -10,20 +10,12 @@ import numpy as np
 from enum import StrEnum, auto
 import matplotlib.pyplot as plt
 class ErrorAnalysis:
-    class TYPE(StrEnum):
-        EMOTIONS = "emotions"
-        TRIGGER = "trigger"
     
-    class METRICS(StrEnum):
-        ACCURACY = auto()
-        ACCURACY_NONE = auto()
-        F1_MACRO = auto()
-        F1_MICRO = auto()
-        F1_WEIGHTED = auto()
-        F1_NONE = auto()
+    
 
     def __init__(self, df, emotion_labels=['0','1','2','3','4','5','6'], trigger_labels=['0','1']):
         self.__counter = 0
+        self.METRICS = [ "accuracy", "accuracy_none", "f1_macro", "f1_micro", "f1_weighted", "f1_none"]
         if  isinstance(df, Dataset):
             self.df = self.dataset2dataframe(df)
         else: self.df = df
@@ -39,7 +31,7 @@ class ErrorAnalysis:
         ds.set_format()
         return pd.DataFrame.from_records([r for r in ds])
     
-    def add_model(self, trainer, ds, model_name='', seed = 42, type=None):
+    def add_model(self, trainer, ds, model_name='', seed = 42, pred_type=None):
         assert ds.shape[0] == self.df.shape[0], f"Wrong Dataset passed! it has {ds.shape[0]} rows, instead of {self.df.shape[0]}" 
         #get model predictions
         try:
@@ -49,14 +41,14 @@ class ErrorAnalysis:
             print(logits.shape, triggers.shape)
         except:
             print("cannot run model(ds)")
-        self.add_predictions(logits, model_name, seed, type= "emotions")
-        self.add_predictions(triggers, model_name, seed, type="trigger")
+        self.add_predictions(logits, model_name, seed, pred_type= "emotions")
+        self.add_predictions(triggers, model_name, seed, pred_type="trigger")
         return("Successfullty added model!")
     
-    def add_predictions(self, logits, model_name='', seed = 42, type=None):
-        if not type and model_name[-2:]=='_t': type = 'trigger'
-        elif not type: type = 'emotions'
-        type = self.TYPE(type)
+    def add_predictions(self, logits, model_name='', seed = 42, pred_type=None):
+        if not pred_type and model_name[-2:]=='_t': pred_type = 'trigger'
+        elif not pred_type: pred_type = 'emotions'
+        assert pred_type == 'emotions' or pred_type == 'trigger', "Wrong pred_type string passed. Pass 'trigger' or 'emotions'"
         if isinstance(logits,Tensor):
             logits = logits.unbind(dim=0)
         assert len(logits) == self.df.shape[0], f"Wrong predictions passed! They are {len(logits)} rows, instead of {self.df.shape[0]}" 
@@ -65,18 +57,18 @@ class ErrorAnalysis:
             self.__counter = self.__counter + 1
         match = re.match("_\d+", model_name)
         if not match: model_name = model_name.replace("_t",'') + f"_{seed}"
-        if type=='trigger' and model_name[-2:]!='_t': model_name = model_name + "_t"
+        if pred_type=='trigger' and model_name[-2:]!='_t': model_name = model_name + "_t"
         #add logits to the dataframe !WE WANT A LIST OF len C tensors! (Batch of Utterances x classes)
         self.df[model_name] = logits
         return ("Successfullty added predictions!")
     
 
-    def get_confusion_matrix(self, model_name, seed = 42, type=None, plot = True):
-        if not type and model_name[-2:]=='_t': type = 'trigger'
-        elif not type: type = 'emotions'
-        type = self.TYPE(type)
+    def get_confusion_matrix(self, model_name, seed = 42, pred_type=None, plot = True):
+        if not pred_type and model_name[-2:]=='_t': pred_type = 'trigger'
+        elif not pred_type: pred_type = 'emotions'
+        assert pred_type == 'emotions' or pred_type == 'trigger', "Wrong pred_type string passed. Pass 'trigger' or 'emotions'"
         #check if it exits model
-        extra = "_t" if type == "trigger" else ""
+        extra = "_t" if pred_type == "trigger" else ""
         if f"{model_name}_{seed}{extra}" in self.df.columns.values:
             model_name = f"{model_name}_{seed}{extra}"
         if model_name not in self.df.columns.values:
@@ -86,7 +78,7 @@ class ErrorAnalysis:
 
         #confusion_matrix want preds (N,...) and target(N, ...), same dimensions
         preds = torch.stack(self.df[model_name].values.tolist())
-        if type == "emotions":
+        if pred_type == "emotions":
             preds = preds.argmax(dim = -1)
             target = torch.tensor(self.df['emotions_id'].values)
             metric = MulticlassConfusionMatrix(num_classes=7, normalize='true')
@@ -103,12 +95,12 @@ class ErrorAnalysis:
             plt.show()
         return metric.compute()
     
-    def get_precision_recall(self, model_name, seed = 42, type=None, plot = True):
-        if not type and model_name[-2:]=='_t': type = 'trigger'
-        elif not type: type = 'emotions'
-        type = self.TYPE(type)
+    def get_precision_recall(self, model_name, seed = 42, pred_type=None, plot = True):
+        if not pred_type and model_name[-2:]=='_t': pred_type = 'trigger'
+        elif not pred_type: pred_type = 'emotions'
+        assert pred_type == 'emotions' or pred_type == 'trigger', "Wrong pred_type string passed. Pass 'trigger' or 'emotions'"
         #check if it exits model
-        extra = "_t" if type == "trigger" else ""
+        extra = "_t" if pred_type == "trigger" else ""
         if f"{model_name}_{seed}{extra}" in self.df.columns.values:
             model_name = f"{model_name}_{seed}{extra}"
         if model_name not in self.df.columns.values:
@@ -117,7 +109,7 @@ class ErrorAnalysis:
 
         #precision recal want preds (N,C,...) and target(N, ...) with target has one less dimension
         preds = torch.stack(self.df[model_name].values.tolist())
-        if type == "emotions":
+        if pred_type == "emotions":
             target = torch.tensor(self.df['emotions_id'].values)
             metric = MulticlassPrecisionRecallCurve(num_classes=7, thresholds = list(np.linspace(0,1,20)))
             labels = self.emotion_labels
@@ -134,9 +126,10 @@ class ErrorAnalysis:
     
 
 
-    def get_performance_table(self, metrics = [METRICS.ACCURACY, METRICS.F1_MACRO]):
+    def get_performance_table(self, metrics = ["accuracy", "f1_macro"]):
         emotion_target = torch.tensor(self.df['emotions_id'].values)
         trigger_target = torch.tensor(self.df['triggers'].values)[:, None]
+        assert all([(metric in self.METRICS) for metric in metrics]), "Not all metrics passed are valid. Pass only metrics present in {a}".format(a=[ "accuracy", "f1_macro", "f1_micro", "f1_weighted"])
 
         outputs = self.df.drop(columns= self.features)
         emotion_collection = MetricCollection([])
@@ -153,11 +146,11 @@ class ErrorAnalysis:
         res = {}
         for model_name in outputs.columns.values:
             preds = torch.stack(outputs[model_name].values.tolist())
-            type = self.TYPE("emotions")
+            pred_type = "emotions"
             if model_name[-2:] == '_t':
                 model_name = model_name[:-2]
-                type = self.TYPE("trigger")
-            if type == "trigger":
+                pred_type = "trigger"
+            if pred_type == "trigger":
                 metrics = trigger_collection(preds, trigger_target)
             else:
                 preds = preds.argmax(dim = -1)
@@ -166,18 +159,18 @@ class ErrorAnalysis:
             res[model_name].update(metrics)
         return res
     
-    def get_misclassified(self, model_name, seed = 42, type=None, t_threshold = 0.5):
-        if not type and model_name[-2:]=='_t': type = 'trigger'
-        elif not type: type = 'emotions'
-        type = self.TYPE(type)
+    def get_misclassified(self, model_name, seed = 42, pred_type=None, t_threshold = 0.5):
+        if not pred_type and model_name[-2:]=='_t': pred_type = 'trigger'
+        elif not pred_type: pred_type = 'emotions'
+        assert pred_type == 'emotions' or pred_type == 'trigger', "Wrong pred_type string passed. Pass 'trigger' or 'emotions'"
         #check if it exits model
-        extra = "_t" if type == "trigger" else ""
+        extra = "_t" if pred_type == "trigger" else ""
         if f"{model_name}_{seed}{extra}" in self.df.columns.values:
             model_name = f"{model_name}_{seed}{extra}"
         if model_name not in self.df.columns.values:
             raise NameError(f"Not found model {model_name}")
-        selector = "emotions_id" if type == "emotions" else "triggers"
-        preds = self.df[model_name].map(lambda x: x.argmax()) if type == "emotions" else self.df[model_name].map(lambda x: x>t_threshold)
+        selector = "emotions_id" if pred_type == "emotions" else "triggers"
+        preds = self.df[model_name].map(lambda x: x.argmax()) if pred_type == "emotions" else self.df[model_name].map(lambda x: x>t_threshold)
         frame = self.df[self.df[selector] != preds]
         return frame[self.features + [model_name]]
     
@@ -186,7 +179,7 @@ class ErrorAnalysis:
         support = self.df['emotions_id'].value_counts().to_dict()
         support = {(self.emotion_labels[k]+metr): support[k] for k in support.keys() for metr in ["_acc","_f1"] }
         support['name'] = 'support'
-        table = self.get_performance_table(metrics = [self.METRICS.ACCURACY_NONE, self.METRICS.F1_NONE])
+        table = self.get_performance_table(metrics = ["accuracy_none", "f1_none"])
         for model_name, metrics in table.items():
             if 'accuracy' in table[model_name].keys() :
                 table[model_name].update({self.emotion_labels[i]+'_acc': v for i,v in enumerate(metrics['accuracy'])})
@@ -213,12 +206,12 @@ class ErrorAnalysis:
         return splits
     
 
-    def get_utterance_ranking(self,  model_name, seed = 42, type=None, t_threshold = 0.5):
-        if not type and model_name[-2:]=='_t': type = 'trigger'
-        elif not type: type = 'emotions'
-        type = self.TYPE(type)
+    def get_utterance_ranking(self,  model_name, seed = 42, pred_type=None, t_threshold = 0.5):
+        if not pred_type and model_name[-2:]=='_t': pred_type = 'trigger'
+        elif not pred_type: pred_type = 'emotions'
+        assert pred_type == 'emotions' or pred_type == 'trigger', "Wrong pred_type string passed. Pass 'trigger' or 'emotions'"
         #check if it exits model
-        extra = "_t" if type == "trigger" else ""
+        extra = "_t" if pred_type == "trigger" else ""
         if f"{model_name}_{seed}{extra}" in self.df.columns.values:
             model_name = f"{model_name}_{seed}{extra}"
         if model_name not in self.df.columns.values:
