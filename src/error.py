@@ -7,7 +7,7 @@ from torchmetrics import MetricCollection
 from torchmetrics.classification import MulticlassConfusionMatrix, BinaryConfusionMatrix, MulticlassPrecisionRecallCurve, BinaryPrecisionRecallCurve, MulticlassF1Score, BinaryF1Score, MulticlassAccuracy, BinaryAccuracy
 import re
 import numpy as np
-from enum import StrEnum, auto
+from enum import auto
 import matplotlib.pyplot as plt
 class ErrorAnalysis:
     
@@ -190,7 +190,7 @@ class ErrorAnalysis:
         table['support'] = support
         return table
     
-    def get_utterance_column(self, x: pd.Series|pd.DataFrame):
+    def get_utterance_column(self, x):
         """
         x: row of a pandas dataframe [Series] or Dataframe itself [Dataframe]
         """

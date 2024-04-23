@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from transformers import LlamaTokenizer, LlamaForSequenceClassification, LlamaModel, BertPreTrainedModel, BertConfig, BertModel
+from transformers import LlamaTokenizer, LlamaForSequenceClassification, LlamaModel, PreTrainedModel, BertPreTrainedModel, BertConfig, BertModel
 
 class LLAMA_EFR(nn.Module):
     def __init__(self, model_path, hid_dim=3200):
@@ -14,7 +14,7 @@ class LLAMA_EFR(nn.Module):
         pass
 
 
-class BERT_Model_Phrase_Concatenation(BertPreTrainedModel):
+class BERT_Model_Phrase_Concatenation(PreTrainedModel):
     def __init__(self, df_manager, load=None, pos_weight=None, freeze=False, model_card='bert-base-uncased'):
         self.config = BertConfig.from_pretrained(model_card, output_attentions=True, output_hidden_states=True)
         self.freeze = freeze
@@ -32,7 +32,6 @@ class BERT_Model_Phrase_Concatenation(BertPreTrainedModel):
             self.pos_weight = pos_weight
         self.emotion_head = nn.Linear(self.config.hidden_size, len(df_manager.unique_emotions))
         self.trigger_head = nn.Linear(self.config.hidden_size, 1)
-        self.softmax = nn.Softmax(dim=1)
         self.post_init()
 
     def initialize_model(self, load):
@@ -53,6 +52,7 @@ class BERT_Model_Phrase_Concatenation(BertPreTrainedModel):
         emotions_id=None,
         triggers=None,
         dialogue_index=None,
+        utterance_index=None,
         return_dict=None,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -72,11 +72,42 @@ class BERT_Model_Phrase_Concatenation(BertPreTrainedModel):
         model_output = torch.cat((sequence_output, sentence_output.last_hidden_state), dim=1)
         emotion_logits = torch.mean(self.emotion_head(model_output), dim=(1))
         trigger_logits = torch.mean(self.trigger_head(model_output), dim=(1))
-        emotion_logits = self.softmax(emotion_logits)
-        trigger_logits = torch.sigmoid(trigger_logits)
         return {"emotion_logits": emotion_logits,
                 "trigger_logits": trigger_logits}
     
+class BERT_concat_nopooling(BERT_Model_Phrase_Concatenation):
+    def forward(
+        self,
+        utterance_ids=None,
+        utterance_mask=None,
+        dialogue_ids=None,
+        dialogue_mask=None,
+        token_type_ids=None,
+        emotions_id_one_hot_encoding=None, 
+        emotions_id=None,
+        triggers=None,
+        dialogue_index=None,
+        return_dict=None,
+    ):
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        outputs = self.core(
+            input_ids=dialogue_ids,
+            attention_mask=dialogue_mask,
+            token_type_ids=token_type_ids,
+            return_dict=return_dict,
+        )
+        cls_representations = outputs.last_hidden_state[:, 0, :]
+        sentence_output = self.core(
+            input_ids=utterance_ids,
+            attention_mask=utterance_mask,
+            token_type_ids=token_type_ids,
+            return_dict=return_dict
+        )
+        model_output = torch.cat((cls_representations.unsqueeze(1), sentence_output.last_hidden_state), dim=1)
+        emotion_logits = torch.mean(self.emotion_head(model_output), dim=(1))
+        trigger_logits = torch.mean(self.trigger_head(model_output), dim=(1))
+        return {"emotion_logits": emotion_logits,
+                "trigger_logits": trigger_logits}
 
 class BERT_Model_Phrase_Extraction(BertPreTrainedModel):
     def __init__(self, df_manager, load=None, pos_weight=None, freeze=False, model_card = 'bert-base-uncased'):
@@ -123,16 +154,35 @@ class BERT_Model_Phrase_Extraction(BertPreTrainedModel):
         end_chanel=self.find_end_chanel(input, start_chanel)
         print(input[start_chanel:end_chanel])
         return output[start_chanel:end_chanel]
+    
+    def extract_utt_from_hidden(self, dialogue_ids, dialogue_index, utt_index, hidden_state):
+        """
+        Args:
+            dialogue_ids (tensor): has shape [batch_size, dialogue_len]
+            dialogue_index (tensor): the dialogue that contains the utterance
+            utt_index (tensor): which utterance in the dialogue we want to extract
+            hidden_state (tensor): has shape [batch_size, dialogue_len, hidden_dim]
+        """
+        extr_dialogue_ids = dialogue_ids[dialogue_index, :]
+        utts_end_index = (extr_dialogue_ids == 102).nonzero(as_tuple=True)[0]
+        
+        if utt_index == 0:
+            extr_utt_ids = extr_dialogue_ids[1:utts_end_index[utt_index]+1]
+        else:
+            extr_utt_ids = extr_dialogue_ids[utts_end_index[utt_index-1]:utts_end_index[utt_index]+1]
+
+            # utts_end_index[utt_index-1]:utts_end_index[utt_index]+1 --->  THIS IS THE RANGE I NEED
             
+
     def forward(
         self,
-        utterance_index=None,
+        utterance_ids=None,
+        utterance_mask=None,
         dialogue_ids=None,
         dialogue_mask=None,
         token_type_ids=None,
-        emotions_id=None,
-        triggers=None,
         dialogue_index=None,
+        utterance_index=None,
         return_dict=None,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
@@ -141,12 +191,15 @@ class BERT_Model_Phrase_Extraction(BertPreTrainedModel):
             attention_mask=dialogue_mask,
             token_type_ids=token_type_ids,
             return_dict=return_dict,
-        ) 
+        )
 
-        model_output = [self.search_for_chanels_in_output(input[i], utterance_index[i], outputs[i]) for i in range(len(dialogue_ids))]
-        emotion_logits = torch.mean(self.emotion_head(model_output), dim=(1))
-        trigger_logits = torch.mean(self.trigger_head(model_output), dim=(1))
-        return {"emotion_logits": emotion_logits,
-                "trigger_logits": trigger_logits}
+        cls_representations = outputs.last_hidden_state[:, 0, :]
+
+        # model_output = [self.search_for_chanels_in_output(input[i], utterance_index[i], outputs[i]) for i in range(len(dialogue_ids))]
+        # emotion_logits = torch.mean(self.emotion_head(model_output), dim=(1))
+        # trigger_logits = torch.mean(self.trigger_head(model_output), dim=(1))
+        # return {"emotion_logits": emotion_logits,
+        #         "trigger_logits": trigger_logits}
+        return {"logits": cls_representations}
 
     

@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 import urllib
 import tqdm
 from datasets import Dataset
@@ -38,15 +39,17 @@ def classify_emotion_logits(predicted_emotion_logits, thresh=0.5):
     return index[0]
 
 
-def compute_metrics_for_trainer(eval_pred):
-    [flat_pred_emotions_logits, flat_pred_triggers_logits] = eval_pred.predictions
-    flat_pred_emotions = []
-    flat_pred_triggers = []
-    for i, predicted_emotion_logits in enumerate(flat_pred_emotions_logits):
-        flat_pred_emotions.append(classify_emotion_logits(torch.tensor(predicted_emotion_logits)))
-        flat_pred_triggers.append((flat_pred_triggers_logits[i]>0.5)[0])
-    eval_pred.predictions = (flat_pred_emotions, flat_pred_triggers)
-    return compute_metrics(eval_pred)
+# def compute_metrics_for_trainer(eval_pred):
+#     [flat_pred_emotions_logits, flat_pred_triggers_logits] = eval_pred.predictions
+#     flat_pred_emotions = []
+#     flat_pred_triggers = torch.round(F.sigmoid(torch.from_numpy(flat_pred_triggers_logits)))
+#     flat_pred_emotions = torch.argmax(F.softmax(torch.from_numpy(flat_pred_emotions_logits), -1), -1)
+    # for i, predicted_emotion_logits in enumerate(flat_pred_emotions_logits):
+        # flat_pred_emotions.append(classify_emotion_logits(torch.tensor(predicted_emotion_logits)))
+        # flat_pred_emotions.append(torch.argmax(F.softmax(torch.from_numpy(predicted_emotion_logits), -1)).item())
+        # flat_pred_triggers.append((flat_pred_triggers_logits[i]>0.5)[0])
+    # eval_pred.predictions = (flat_pred_emotions, flat_pred_triggers)
+    # return compute_metrics(eval_pred)
     
 
 def restore_texts(eval_pred):
@@ -72,22 +75,25 @@ def restore_texts(eval_pred):
 
 
 def compute_metrics(eval_pred, emotion_count=7):
-    [flat_pred_emotions, flat_pred_triggers] = eval_pred.predictions
+    [pred_emotions_logits, pred_triggers_logits] = eval_pred.predictions
     [flat_label_emotions, flat_label_triggers] = eval_pred.label_ids[0:2]
-    
-    predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = restore_texts(eval_pred)
 
-    f1scores_emotions_instance = f1_score_per_instance(predictions_emotions, labels_emotions, list(range(emotion_count)))
+    flat_pred_triggers = torch.round(F.sigmoid(torch.from_numpy(pred_triggers_logits)))
+    flat_pred_emotions = torch.argmax(F.softmax(torch.from_numpy(pred_emotions_logits), -1), -1)
+    
+    # predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = restore_texts(eval_pred)
+
+    # f1scores_emotions_instance = f1_score_per_instance(predictions_emotions, labels_emotions, list(range(emotion_count)))
     f1scores_emotions_flatten = f1_score_on_flat(flat_pred_emotions, flat_label_emotions, list(range(emotion_count)))
-    f1scores_triggers_instance = f1_score_per_instance(predictions_triggers, labels_triggers, [0,1])
+    # f1scores_triggers_instance = f1_score_per_instance(predictions_triggers, labels_triggers, [0,1])
     f1scores_triggers_flatten = f1_score_on_flat(flat_pred_triggers, flat_label_triggers, [0,1])
 
 
     return {'accuracy_emotions': round(accuracy_score(flat_pred_emotions, flat_label_emotions), 4),
             'accuracy_triggers': round(accuracy_score(flat_pred_triggers, flat_label_triggers), 4),
-            'f1scores_emotions_instance': f1scores_emotions_instance,
+            # 'f1scores_emotions_instance': f1scores_emotions_instance,
             'f1scores_emotions_flatten': f1scores_emotions_flatten,
-            'f1scores_triggers_instance': f1scores_triggers_instance,
+            # 'f1scores_triggers_instance': f1scores_triggers_instance,
             'f1scores_triggers_flatten': f1scores_triggers_flatten}
 
 def print_loss(trainer_history):
@@ -152,6 +158,7 @@ def preprocess_text(tokenizer, dataset, num_emotions):
                 'emotions_id_one_hot_encoding': torch.nn.functional.one_hot(torch.tensor(row["emotions_id"][j]), num_emotions),
                 'emotions_id': row["emotions_id"][j],
                 'triggers': row['triggers'][j],
+                # 'triggers': torch.nn.functional.one_hot(torch.tensor(row['triggers'][j]), 2),
                 'utterance_index': j
             }
             counter += 1
@@ -230,27 +237,19 @@ class DataframeManager():
     
     def produce_dataset(self, tokenizer, RANDOM_SEED):
         train_df, val_df, test_df = self.split_df(RANDOM_SEED)
-        # train_dataset = Dataset.from_pandas(train_df[0:50])
-        # val_dataset = Dataset.from_pandas(val_df[0:10])
         train_dataset = Dataset.from_pandas(train_df)
         val_dataset = Dataset.from_pandas(val_df)
+        # train_dataset = Dataset.from_pandas(train_df[0:50])
+        # val_dataset = Dataset.from_pandas(val_df[0:10])
         test_dataset = Dataset.from_pandas(test_df)
 
-        train_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(train_dataset[0:(len(train_dataset)//10)]), len(self.unique_emotions))
-        val_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(val_dataset[0:(len(val_dataset)//10)]), len(self.unique_emotions))
-        test_data_tokenized = preprocess_text(tokenizer, Dataset.from_dict(test_dataset[0:(len(test_dataset)//10)]), len(self.unique_emotions))
+        train_data_tokenized = preprocess_text(tokenizer, train_dataset, len(self.unique_emotions))
+        val_data_tokenized = preprocess_text(tokenizer, val_dataset, len(self.unique_emotions))
+        test_data_tokenized = preprocess_text(tokenizer, test_dataset, len(self.unique_emotions))
 
         train_data_tokenized.set_format("torch")
         val_data_tokenized.set_format("torch")
         test_data_tokenized.set_format("torch")
-
-        # transform emotions_ids into one-hot encoding
-        # for i in range(len(train_data_tokenized)):
-        #     train_data_tokenized[i]["emotions_id"] = torch.nn.functional.one_hot(train_data_tokenized[i]["emotions_id"], len(self.unique_emotions))
-        # for i in range(len(val_data_tokenized)):
-        #     val_data_tokenized[i]["emotions_id"] = torch.nn.functional.one_hot(val_data_tokenized[i]["emotions_id"], len(self.unique_emotions))
-        # for i in range(len(test_data_tokenized)):
-        #     test_data_tokenized[i]["emotions_id"] = torch.nn.functional.one_hot(test_data_tokenized[i]["emotions_id"], len(self.unique_emotions))
 
         return train_data_tokenized, val_data_tokenized, test_data_tokenized
 

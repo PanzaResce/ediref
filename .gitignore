@@ -1,3 +1,5 @@
 /offload_base
 **/__pycache__/
 project_personal.ipynb
+personal.py
+/model_dir
