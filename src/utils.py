@@ -25,14 +25,6 @@ def download_url(download_path: Path, url: str):
     with DownloadProgressBar(unit='B', unit_scale=True, miniters=1, desc=url.split('/')[-1]) as t:
         urllib.request.urlretrieve(url, filename=download_path, reporthook=t.update_to)
 
-def f1_score_per_instance(y_pred, y_true, labels):
-    scores = [f1_score(y_true[i], y_pred[i], average='macro', labels=labels, zero_division=0) for i in range(len(y_pred))]
-    return round(sum(scores)/len(scores), 4)
-
-def f1_score_on_flat(y_pred, y_true, labels):
-    result = round(f1_score(y_true, y_pred, average='macro', labels=labels, zero_division=0), 4)
-    return result
-
 def classify_emotion_logits(predicted_emotion_logits, thresh=0.5):
     predicted_emotion_logits = (predicted_emotion_logits > thresh)
     index = [i for i,x in enumerate(predicted_emotion_logits) if x]
@@ -77,24 +69,39 @@ def restore_texts(eval_pred):
 def compute_metrics(eval_pred, emotion_count=7):
     [pred_emotions_logits, pred_triggers_logits] = eval_pred.predictions
     [flat_label_emotions, flat_label_triggers] = eval_pred.label_ids[0:2]
+    dialogue_index = eval_pred.label_ids[2]
 
     flat_pred_triggers = torch.round(F.sigmoid(torch.from_numpy(pred_triggers_logits)))
     flat_pred_emotions = torch.argmax(F.softmax(torch.from_numpy(pred_emotions_logits), -1), -1)
     
-    # predictions_emotions, labels_emotions, predictions_triggers, labels_triggers = restore_texts(eval_pred)
+    # f1 scores computed on all the utterances
+    f1scores_emotions = round(f1_score(flat_label_emotions, flat_pred_emotions, average='macro', labels=list(range(emotion_count)), zero_division=0), 4)
+    f1scores_triggers = round(f1_score(flat_label_triggers, flat_pred_triggers, average='macro', labels=(0,1), zero_division=0), 4)
 
-    # f1scores_emotions_instance = f1_score_per_instance(predictions_emotions, labels_emotions, list(range(emotion_count)))
-    f1scores_emotions_flatten = f1_score_on_flat(flat_pred_emotions, flat_label_emotions, list(range(emotion_count)))
-    # f1scores_triggers_instance = f1_score_per_instance(predictions_triggers, labels_triggers, [0,1])
-    f1scores_triggers_flatten = f1_score_on_flat(flat_pred_triggers, flat_label_triggers, [0,1])
+    # average f1 scores of the dialogues
+    f1scores_emotions_d = f1scores_triggers_d = 0
+    for i in np.unique(dialogue_index):
+        gt_emotions = flat_label_emotions[np.where(dialogue_index == i)]
+        gt_triggers = flat_label_triggers[np.where(dialogue_index == i)]
+
+        pr_emotions = flat_pred_emotions[np.where(dialogue_index == i)]
+        pr_triggers = flat_pred_triggers[np.where(dialogue_index == i)]
+
+        # I am using micro_avg because a dialogue may not contain all the labels
+        f1scores_emotions_d += round(f1_score(gt_emotions, pr_emotions, average='micro', labels=list(range(emotion_count)), zero_division=0), 4)
+        f1scores_triggers_d += round(f1_score(gt_triggers, pr_triggers, average='micro', labels=(0,1), zero_division=0), 4)
+
+    f1scores_emotions_d = round(f1scores_emotions_d / len(np.unique(dialogue_index)), 4)
+    f1scores_triggers_d = round(f1scores_triggers_d / len(np.unique(dialogue_index)), 4)
 
 
     return {'accuracy_emotions': round(accuracy_score(flat_pred_emotions, flat_label_emotions), 4),
             'accuracy_triggers': round(accuracy_score(flat_pred_triggers, flat_label_triggers), 4),
-            # 'f1scores_emotions_instance': f1scores_emotions_instance,
-            'f1scores_emotions_flatten': f1scores_emotions_flatten,
-            # 'f1scores_triggers_instance': f1scores_triggers_instance,
-            'f1scores_triggers_flatten': f1scores_triggers_flatten}
+            'u_avg_f1': round((f1scores_triggers + f1scores_emotions)/2, 4),
+            'u_f1scores_emotions': f1scores_emotions,
+            'u_f1scores_triggers': f1scores_triggers,
+            'd_f1scores_emotions': f1scores_emotions_d,
+            'd_f1scores_triggers': f1scores_triggers_d,}
 
 def print_loss(trainer_history):
     train_loss = []
@@ -141,7 +148,7 @@ def preprocess_text(tokenizer, dataset, num_emotions):
         'utterance_index':[]
     }
     all_sentences = [sentence for row in dataset for sentence in row['utterances']]
-    concatenated_texts =[" [SEP] ".join(text) for text in dataset['utterances']] 
+    concatenated_texts =[tokenizer.sep_token.join(text) for text in dataset['utterances']] 
     all_sentences_tokenized = tokenizer(all_sentences, padding=True, truncation=True)
     concatenated_texts_tokenized = tokenizer(concatenated_texts, padding=True, truncation=True)
     counter = 0
@@ -275,3 +282,24 @@ class DataframeManager():
 
         #test_split.iloc[:, 4:].apply(pd.value_counts).plot(kind='bar', title='Test', ax = axs[2], legend = False)
         fig.legend(labels=list(self.unique_emotions), loc='upper right')
+    
+    def get_triggers_from_df(self, df):
+            triggers = sum([el == 1 for triggers in df["triggers"] for el in triggers])
+            not_triggers = sum([el == 0 for triggers in df["triggers"] for el in triggers])
+            out_dict = {"trigger": [triggers], "not_trigger": [not_triggers]}
+            return pd.DataFrame.from_dict(out_dict)
+
+    def plot_triggers_distribution(self, train_df, val_df, test_df):
+        fig, axs = plt.subplots(1, 3)
+        fig.set_size_inches(12, 4)
+
+        self.get_triggers_from_df(train_df).plot(kind='bar', title='Train', ax = axs[0], legend = False)
+        self.get_triggers_from_df(val_df).plot(kind='bar', title='Validation', ax = axs[1], legend = False)
+        self.get_triggers_from_df(test_df).plot(kind='bar', title='Test', ax = axs[2], legend = False)
+
+        fig.legend(labels=("triggers", "not_triggers"), loc='upper right')
+        
+        
+        
+        
+
