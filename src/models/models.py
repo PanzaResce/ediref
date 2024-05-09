@@ -13,7 +13,7 @@ class Model_Phrase_Concatenation(PreTrainedModel):
 
         if model_card == "bert-base-uncased":
             self.core = BertModel(self.config)
-        elif model_card == "roverta-base":
+        elif model_card == "roberta-base":
             self.core = RobertaModel(self.config)
 
         # Freeze BERT embedding layer parameters
