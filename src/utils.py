@@ -225,11 +225,12 @@ class DataframeManager():
     def produce_df(self):
         self.clean_df = self.raw_df.copy()
 
-        self.unique_emotions = self.get_unique_elements_for(self.column_emotions)
-        self.unique_emotions_len = len(self.unique_emotions)
         # self.unique_emotions_one_hot_encodings = [ [1 if j == i else 0 for j in range(self.unique_emotions_len)] for i in range(self.unique_emotions_len)]
 
-        self.emotion2id = {label:i for i, label in enumerate(self.unique_emotions)}
+        # self.emotion2id = {label:i for i, label in enumerate(self.unique_emotions)}
+        self.emotion2id = {'sadness': 0, 'fear': 1, 'disgust': 2, 'surprise': 3, 'neutral': 4, 'anger': 5, 'joy': 6}
+        self.unique_emotions = set(self.emotion2id.keys())
+        self.unique_emotions_len = len(self.unique_emotions)
 
         # add emotions_id column
         self.clean_df[self.column_emotions_id] = [[self.emotion2id[emotion] for emotion in emotions ] for emotions in self.clean_df[self.column_emotions]]
