@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from transformers import AutoConfig, PreTrainedModel, BertConfig, BertModel, RobertaModel, RobertaConfig
+from transformers import AutoConfig, PreTrainedModel, BertModel, RobertaModel, ElectraModel
 
 
 class Model_Phrase_Concatenation(PreTrainedModel):
@@ -15,6 +15,8 @@ class Model_Phrase_Concatenation(PreTrainedModel):
             self.core = BertModel(self.config)
         elif model_card == "roberta-base":
             self.core = RobertaModel(self.config)
+        elif model_card == "google/electra-base-discriminator":
+            self.core = ElectraModel(self.config)
 
         # Freeze BERT embedding layer parameters
         if freeze:
