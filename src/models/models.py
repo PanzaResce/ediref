@@ -4,7 +4,7 @@ from transformers import AutoConfig, PreTrainedModel, BertModel, RobertaModel, E
 
 
 class Model_Phrase_Concatenation(PreTrainedModel):
-    def __init__(self, num_emotions, sep, freeze=False, model_card='bert-base-uncased'):
+    def __init__(self, num_emotions, sep, model_card, freeze=False):
         self.config = AutoConfig.from_pretrained(model_card, output_attentions=True, output_hidden_states=True)
         self.freeze = freeze
         self.sep_token = sep
