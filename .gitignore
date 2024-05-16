@@ -3,3 +3,5 @@
 project_personal.ipynb
 personal.py
 /model_dir
+/trained_models
+/already_trained_models

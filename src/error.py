@@ -15,6 +15,7 @@ class ErrorAnalysis:
 
     def __init__(self, df, emotion_labels=['0','1','2','3','4','5','6'], trigger_labels=['0','1']):
         self.__counter = 0
+        self.separator = '[SEP]'
         self.METRICS = [ "accuracy", "accuracy_none", "f1_macro", "f1_micro", "f1_weighted", "f1_none"]
         if  isinstance(df, Dataset):
             self.df = self.dataset2dataframe(df)
@@ -38,29 +39,30 @@ class ErrorAnalysis:
             outputs = trainer.predict(ds).predictions
             logits = torch.tensor(outputs[0])
             triggers = torch.tensor(outputs[1])
-            print(logits.shape, triggers.shape)
+            #print(logits.shape, triggers.shape)
         except:
             print("cannot run model(ds)")
-        self.add_predictions(logits, model_name, seed, pred_type= "emotions")
-        self.add_predictions(triggers, model_name, seed, pred_type="trigger")
-        return("Successfullty added model!")
+        s1 = self.add_predictions(logits, model_name, seed, pred_type= "emotions")
+        s2 = self.add_predictions(triggers, model_name, seed, pred_type="trigger")
+        return(f"Successfullty added model!({s1}, {s2})")
     
     def add_predictions(self, logits, model_name='', seed = 42, pred_type=None):
         if not pred_type and model_name[-2:]=='_t': pred_type = 'trigger'
         elif not pred_type: pred_type = 'emotions'
         assert pred_type == 'emotions' or pred_type == 'trigger', "Wrong pred_type string passed. Pass 'trigger' or 'emotions'"
         if isinstance(logits,Tensor):
+            if pred_type == 'emotions': logits = logits.softmax(dim=-1)
             logits = logits.unbind(dim=0)
         assert len(logits) == self.df.shape[0], f"Wrong predictions passed! They are {len(logits)} rows, instead of {self.df.shape[0]}" 
         if model_name == '': 
             model_name = f"model{self.__counter}"
             self.__counter = self.__counter + 1
-        match = re.match("_\d+", model_name)
+        match = re.search("_\d+", model_name) != None
         if not match: model_name = model_name.replace("_t",'') + f"_{seed}"
         if pred_type=='trigger' and model_name[-2:]!='_t': model_name = model_name + "_t"
         #add logits to the dataframe !WE WANT A LIST OF len C tensors! (Batch of Utterances x classes)
         self.df[model_name] = logits
-        return ("Successfullty added predictions!")
+        return (f"Successfullty added predictions for model {model_name}!")
     
 
     def get_confusion_matrix(self, model_name, seed = 42, pred_type=None, plot = True):
@@ -133,7 +135,7 @@ class ErrorAnalysis:
 
         outputs = self.df.drop(columns= self.features)
         emotion_collection = MetricCollection([])
-        if "accuracy" in metrics: emotion_collection.add_metrics({"accuracy": MulticlassAccuracy(num_classes=7)})
+        if "accuracy" in metrics: emotion_collection.add_metrics({"accuracy": MulticlassAccuracy(num_classes=7, average='micro')})
         if "f1_micro" in metrics: emotion_collection.add_metrics({"f1_micro": MulticlassF1Score(num_classes=7, average= 'micro')})
         if "f1_macro" in metrics: emotion_collection.add_metrics({"f1_macro": MulticlassF1Score(num_classes=7, average= 'macro')})
         if "f1_weighted" in metrics: emotion_collection.add_metrics({"f1_weighted": MulticlassF1Score(num_classes=7, average= 'weighted')})
@@ -197,12 +199,12 @@ class ErrorAnalysis:
         if type(x) == pd.Series:
             assert 'dialogue_text' in x.index.values, "Not found property 'dialogue_text' for row series!" 
             assert 'utterance_index' in x.index.values, "Not found property 'utterance_index' for row series!" 
-            splits = x['dialogue_text'].split(' [SEP] ')
+            splits = x['dialogue_text'].split(self.separator)
             return splits[x['utterance_index']]
         elif type(x) == pd.DataFrame:
             assert 'dialogue_text' in x.columns.values, "Not found column 'dialogue_text'!" 
             assert 'utterance_index' in x.columns.values, "Not found column 'utterance_index'!" 
-            splits = x.apply(lambda row: row['dialogue_text'].split(' [SEP] ')[row['utterance_index']], axis = 1)
+            splits = x.apply(lambda row: row['dialogue_text'].split(self.separator)[row['utterance_index']], axis = 1)
         return splits
     
 
